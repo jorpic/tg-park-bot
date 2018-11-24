@@ -14,17 +14,15 @@ create table sync_log(
 
 
 create table known_users(
-  id integer not null,
-  full_name text not null,
-  username text,
+  id integer primary key,
   joined_on datetime not null,
   removed_on datetime
 );
 
 
 create table comingouts(
+  msg_id integer primary key,
   user_id integer not null,
-  msg_id integer not null,
   msg_date datetime not null,
   msg_text text not null,
   building_num integer not null,
@@ -35,8 +33,8 @@ create table comingouts(
 
 
 create table open_chats(
+  id integer primary key,
   user_id integer not null,
-  chat_id integer not null,
   created_on datetime not null,
   wants_notification boolean not null,
 
