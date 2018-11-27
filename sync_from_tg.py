@@ -3,6 +3,7 @@
 from telethon import TelegramClient, sync
 import sqlite3
 import sys
+import re
 
 
 if len(sys.argv) != 3:
@@ -20,7 +21,7 @@ with sqlite3.connect(sys.argv[1]) as sql:
     client = TelegramClient(config_name, cfg["api_id"], cfg["api_hash"]).start()
     channel = client.get_entity(cfg["chat_url"])
 
-    # update known_users
+    ### update known_users
     users = client.get_participants(channel)
     sql.execute("""
         create temporary table current_users(
@@ -53,7 +54,29 @@ with sqlite3.connect(sys.argv[1]) as sql:
               and exists (select 1 from current_users c where c.id = k.id)
     """)
     sql.execute("drop table current_users")
-    sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")
 
-# for building in [1,2,3,4]:
-#     [m for m in client.get_messages(chan, search=("#%dкорпус" % building), limit=1000)]
+
+    ### add disclosure messages
+    rx = re.compile(r'#(\d+)этаж')
+    msg_rows = []
+    for building in [1,2,3,4]:
+        msgs = client.get_messages(
+                channel,
+                search=("#%dкорпус" % building),
+                limit=1000)
+        for m in msgs:
+            floors = rx.findall(m.message)
+            if len(floors) > 0:
+                msg_rows.append((
+                    m.id,
+                    m.from_id,
+                    m.date.strftime("%s"),
+                    m.message,
+                    building,
+                    floors[0]))
+
+    sql.executemany(
+            "insert or ignore into comingouts values (?,?,?,?,?,?)",
+            msg_rows)
+
+    sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")
