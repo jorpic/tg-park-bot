@@ -7,4 +7,5 @@ edition = "2018"
 [dependencies]
 futures = "0.1"
 tokio-core = "0.1"
-telebot = "0.2.10"
+telebot = "0.2"
+sqlite ="0.24"
