@@ -3,7 +3,8 @@ create table bot_config(
   id text primary key,
   chat_url text not null,
   api_id text not null,
-  api_hash text not null
+  api_hash text not null,
+  bot_token text not null
 );
 
 

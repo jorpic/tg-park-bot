@@ -5,6 +5,7 @@ authors = ["Max Taldykin <jorpic@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+failure = "0.1"
 futures = "0.1"
 tokio-core = "0.1"
 telebot = "0.2"
