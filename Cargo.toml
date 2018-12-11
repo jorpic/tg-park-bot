@@ -10,3 +10,8 @@ futures = "0.1"
 tokio-core = "0.1"
 telebot = "0.2"
 sqlite ="0.24"
+
+[dev-dependencies.cargo-husky]
+version = "1"
+default-features = false
+features = ["precommit-hook", "run-cargo-fmt"]
