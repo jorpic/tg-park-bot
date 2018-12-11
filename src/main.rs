@@ -14,9 +14,12 @@ use tokio_core::reactor::Core;
 
 // FIXME: reuse prepared statements?
 
-
-fn get_bot_key(sql: &sqlite::Connection, config: &str) -> Result<String, Error> {
-    let mut query = sql.prepare("select bot_key from bot_config where id = ?")?;
+fn get_bot_key(
+    sql: &sqlite::Connection,
+    config: &str,
+) -> Result<String, Error> {
+    let mut query =
+        sql.prepare("select bot_key from bot_config where id = ?")?;
     query.bind(1, config)?;
 
     match query.next()? {
@@ -27,6 +30,37 @@ fn get_bot_key(sql: &sqlite::Connection, config: &str) -> Result<String, Error> 
     }
 }
 
+// We prevent new chat members from accessing neighbourhood information.
+const NEW_USER_TIMEOUT: &str = "-2 days";
+const NEW_USER_MSG: &str =
+    "Возвращайтесь через пару дней.";
+
+enum UserStatus {
+    Stranger,
+    KnownButUntrusted,
+    KnownAndTrusted,
+}
+
+fn is_known_user(
+    sql: &sqlite::Connection,
+    user_id: i64,
+) -> Result<UserStatus, Error> {
+    let mut query = sql.prepare(
+        "select joined_on < strftime('%s', 'now', ?) from known_users \
+         where removed_on is null and id = ? \
+         limit 1",
+    )?;
+
+    query.bind(1, NEW_USER_TIMEOUT)?;
+    query.bind(2, user_id)?;
+    match query.next()? {
+        sqlite::State::Done => Ok(UserStatus::Stranger),
+        sqlite::State::Row => match query.read::<i64>(0)? {
+            0 => Ok(UserStatus::KnownButUntrusted),
+            _ => Ok(UserStatus::KnownAndTrusted),
+        },
+    }
+}
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
@@ -44,33 +78,27 @@ fn main() -> Result<(), Error> {
     let mut reactor = Core::new()?;
     let bot = RcBot::new(reactor.handle(), &bot_key).update_interval(500);
     let handle = bot.new_cmd("/start").and_then(move |(bot, msg)| {
-        let mut chk_user = sql
-            .prepare(
-                "select 1 from known_users \
-                where removed_on is null \
-                  and joined_on < strftime('%s', 'now', '-2 days') \
-                  and id = ?
-                limit 1",
-            )
-            .unwrap();
-
         let user_id = msg.from.unwrap().id;
-        chk_user.bind(1, user_id).unwrap();
-        match chk_user.next() {
-            Err(_err) => (), // TODO: add logger
-            Ok(sqlite::State::Done) => {
+        let chat_id = msg.chat.id;
+        is_known_user(&sql, user_id).map(|known| match known {
+            UserStatus::Stranger => {
                 let text = "Простите, я вас не знаю.".to_string();
-                bot.message(msg.chat.id, text).send();
-            }
-            Ok(sqlite::State::Row) => {
+                bot.message(chat_id, text).send()
+            },
+            UserStatus::KnownButUntrusted => {
+                let text = format!(
+                    "Вы совсем недавно присоединились к нашему чатику, \
+                    мне нужно время, чтобы узнать вас получше.\n{}",
+                    NEW_USER_MSG);
+                bot.message(chat_id, text).send()
+            },
+            UserStatus::KnownAndTrusted => {
                 // TODO: поискать соседей
                 // TODO: предложить подписаться
-                let text = "Hi!".to_string();
-                bot.message(msg.chat.id, text).send();
+                let text = "Привет!".to_string();
+                bot.message(chat_id, text).send()
             }
-        }
-
-        Ok(())
+        })
     });
 
     bot.register(handle);
