@@ -1,3 +1,8 @@
+#![feature(result_map_or_else)]
+
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 #[macro_use]
 extern crate failure;
 extern crate futures;
@@ -35,6 +40,7 @@ const NEW_USER_TIMEOUT: &str = "-2 days";
 const NEW_USER_MSG: &str =
     "Возвращайтесь через пару дней.";
 
+#[derive(Debug)]
 enum UserStatus {
     Stranger,
     KnownButUntrusted,
@@ -62,6 +68,25 @@ fn is_known_user(
     }
 }
 
+fn compose_greeting(user_status: UserStatus) -> String {
+    match user_status {
+        UserStatus::Stranger => {
+            "Простите, я вас не знаю.".to_string()
+        },
+        UserStatus::KnownButUntrusted => {
+            format!(
+                "Вы совсем недавно присоединились к нашему уютному чатику, \
+                мне нужно время, чтобы узнать вас получше.\n{}",
+                NEW_USER_MSG)
+        },
+        UserStatus::KnownAndTrusted => {
+            // TODO: поискать соседей
+            // TODO: предложить подписаться
+            "Привет! Я робот. Я могу помочь вам найти соседей.".to_string()
+        }
+    }
+}
+
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
@@ -72,6 +97,12 @@ fn main() -> Result<(), Error> {
     let db_path = &args[1];
     let config_variant = &args[2];
 
+    env_logger::init();
+    info!(
+        "Started with '{}' as DB and '{}' config",
+        db_path, config_variant
+    );
+
     let sql = sqlite::open(db_path)?;
     let bot_key = get_bot_key(&sql, config_variant)?;
 
@@ -80,25 +111,17 @@ fn main() -> Result<(), Error> {
     let handle = bot.new_cmd("/start").and_then(move |(bot, msg)| {
         let user_id = msg.from.unwrap().id;
         let chat_id = msg.chat.id;
-        is_known_user(&sql, user_id).map(|known| match known {
-            UserStatus::Stranger => {
-                let text = "Простите, я вас не знаю.".to_string();
-                bot.message(chat_id, text).send()
+        let greeting = is_known_user(&sql, user_id).map_or_else(
+            |err| {
+                error!("is_known_user: {:?}", err);
+                "Что-то пошло не так".to_string()
             },
-            UserStatus::KnownButUntrusted => {
-                let text = format!(
-                    "Вы совсем недавно присоединились к нашему чатику, \
-                    мне нужно время, чтобы узнать вас получше.\n{}",
-                    NEW_USER_MSG);
-                bot.message(chat_id, text).send()
+            |user_status| {
+                info!("new user joined: {} {:?}", user_id, user_status);
+                compose_greeting(user_status)
             },
-            UserStatus::KnownAndTrusted => {
-                // TODO: поискать соседей
-                // TODO: предложить подписаться
-                let text = "Привет!".to_string();
-                bot.message(chat_id, text).send()
-            }
-        })
+        );
+        bot.message(chat_id, greeting).send()
     });
 
     bot.register(handle);
