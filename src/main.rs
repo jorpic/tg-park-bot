@@ -99,8 +99,10 @@ fn main() -> Result<(), Error> {
 
     env_logger::init();
     info!(
-        "Started with '{}' as DB and '{}' config",
-        db_path, config_variant
+        "Started version '{}' with '{}' as DB and '{}' config",
+        env!("GIT_HASH"),
+        db_path,
+        config_variant
     );
 
     let sql = sqlite::open(db_path)?;
