@@ -47,46 +47,6 @@ enum UserStatus {
     KnownAndTrusted,
 }
 
-fn is_known_user(
-    sql: &sqlite::Connection,
-    user_id: i64,
-) -> Result<UserStatus, Error> {
-    let mut query = sql.prepare(
-        "select joined_on < strftime('%s', 'now', ?) from known_users \
-         where removed_on is null and id = ? \
-         limit 1",
-    )?;
-
-    query.bind(1, NEW_USER_TIMEOUT)?;
-    query.bind(2, user_id)?;
-    match query.next()? {
-        sqlite::State::Done => Ok(UserStatus::Stranger),
-        sqlite::State::Row => match query.read::<i64>(0)? {
-            0 => Ok(UserStatus::KnownButUntrusted),
-            _ => Ok(UserStatus::KnownAndTrusted),
-        },
-    }
-}
-
-fn compose_greeting(user_status: UserStatus) -> String {
-    match user_status {
-        UserStatus::Stranger => {
-            "Простите, я вас не знаю.".to_string()
-        },
-        UserStatus::KnownButUntrusted => {
-            format!(
-                "Вы совсем недавно присоединились к нашему уютному чатику, \
-                мне нужно время, чтобы узнать вас получше.\n{}",
-                NEW_USER_MSG)
-        },
-        UserStatus::KnownAndTrusted => {
-            // TODO: поискать соседей
-            // TODO: предложить подписаться
-            "Привет! Я робот. Я могу помочь вам найти соседей.".to_string()
-        }
-    }
-}
-
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
@@ -129,4 +89,44 @@ fn main() -> Result<(), Error> {
     bot.register(handle);
     bot.run(&mut reactor)?;
     Ok(())
+}
+
+fn is_known_user(
+    sql: &sqlite::Connection,
+    user_id: i64,
+) -> Result<UserStatus, Error> {
+    let mut query = sql.prepare(
+        "select joined_on < strftime('%s', 'now', ?) from known_users \
+         where removed_on is null and id = ? \
+         limit 1",
+    )?;
+
+    query.bind(1, NEW_USER_TIMEOUT)?;
+    query.bind(2, user_id)?;
+    match query.next()? {
+        sqlite::State::Done => Ok(UserStatus::Stranger),
+        sqlite::State::Row => match query.read::<i64>(0)? {
+            0 => Ok(UserStatus::KnownButUntrusted),
+            _ => Ok(UserStatus::KnownAndTrusted),
+        },
+    }
+}
+
+fn compose_greeting(user_status: UserStatus) -> String {
+    match user_status {
+        UserStatus::Stranger => {
+            "Простите, я вас не знаю.".to_string()
+        },
+        UserStatus::KnownButUntrusted => {
+            format!(
+                "Вы совсем недавно присоединились к нашему уютному чатику, \
+                мне нужно время, чтобы узнать вас получше.\n{}",
+                NEW_USER_MSG)
+        },
+        UserStatus::KnownAndTrusted => {
+            // TODO: поискать соседей
+            // TODO: предложить подписаться
+            "Привет! Я робот. Я могу помочь вам найти соседей.".to_string()
+        }
+    }
 }
