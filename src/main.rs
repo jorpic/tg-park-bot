@@ -11,9 +11,11 @@ extern crate telebot;
 extern crate tokio_core;
 
 use failure::Error;
-use futures::stream::Stream;
+use futures::future::{self, Either};
+use futures::{stream::Stream, Future};
 use std::env;
 use telebot::functions::*;
+use telebot::objects::Message;
 use telebot::RcBot;
 use tokio_core::reactor::Core;
 
@@ -40,7 +42,7 @@ const NEW_USER_TIMEOUT: &str = "-2 days";
 const NEW_USER_MSG: &str =
     "Возвращайтесь через пару дней.";
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum UserStatus {
     Stranger,
     KnownButUntrusted,
@@ -73,17 +75,30 @@ fn main() -> Result<(), Error> {
     let handle = bot.new_cmd("/start").and_then(move |(bot, msg)| {
         let user_id = msg.from.unwrap().id;
         let chat_id = msg.chat.id;
-        let greeting = is_known_user(&sql, user_id).map_or_else(
-            |err| {
+        match is_known_user(&sql, user_id) {
+            Err(err) => {
                 error!("is_known_user: {:?}", err);
-                "Что-то пошло не так".to_string()
+                Either::A(bot.message(
+                    chat_id,
+                    "Что-то пошло не так. \
+                    Попробуйте ещё раз /start через некоторое время.".to_string(),
+                ).send())
             },
-            |user_status| {
+            Ok(user_status) => {
                 info!("new user joined: {} {:?}", user_id, user_status);
-                compose_greeting(user_status)
-            },
-        );
-        bot.message(chat_id, greeting).send()
+                Either::B(
+                    greet_user(&user_status, bot, chat_id)
+                    .and_then(move |(bot, msg)| either(
+                        user_status != UserStatus::KnownAndTrusted,
+                        (bot, msg),
+                        future::ok,
+                        move |(bot, _)| bot.message(chat_id, "OK".into()).send()
+                        // TODO: поискать соседей
+                        // TODO: предложить подписаться
+                    ))
+                )
+            }
+        }
     });
 
     bot.register(handle);
@@ -112,7 +127,16 @@ fn is_known_user(
     }
 }
 
-fn compose_greeting(user_status: UserStatus) -> String {
+fn greet_user(
+    user_status: &UserStatus,
+    bot: RcBot,
+    chat_id: i64,
+) -> impl Future<Item = (RcBot, Message), Error = Error> {
+    let greeting = compose_greeting(user_status);
+    bot.message(chat_id, greeting).send()
+}
+
+fn compose_greeting(user_status: &UserStatus) -> String {
     match user_status {
         UserStatus::Stranger => {
             "Простите, я вас не знаю.".to_string()
@@ -124,9 +148,25 @@ fn compose_greeting(user_status: UserStatus) -> String {
                 NEW_USER_MSG)
         },
         UserStatus::KnownAndTrusted => {
-            // TODO: поискать соседей
-            // TODO: предложить подписаться
             "Привет! Я робот. Я могу помочь вам найти соседей.".to_string()
         }
+    }
+}
+
+fn either<I, E, F, G, FnF, FnG>(
+    cond: bool,
+    x: I,
+    f: FnF,
+    g: FnG,
+) -> Either<F, G>
+where
+    F: Future<Item = I, Error = E>,
+    G: Future<Item = I, Error = E>,
+    FnF: FnOnce(I) -> F,
+    FnG: FnOnce(I) -> G,
+{
+    match cond {
+        true => Either::A(f(x)),
+        false => Either::B(g(x)),
     }
 }
