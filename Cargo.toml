@@ -8,10 +8,14 @@ edition = "2018"
 failure = "0.1"
 futures = "0.1"
 tokio-core = "0.1"
-telebot = "0.2"
 sqlite ="0.24"
 log = "0.4"
 env_logger = "0.6"
+
+
+[dependencies.telebot]
+git = "https://github.com/bytesnake/telebot/"
+rev = "668b61c417fc6e9704885f6c35cbd754109d1ba3"
 
 [dev-dependencies.cargo-husky]
 version = "1"
