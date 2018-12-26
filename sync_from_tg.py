@@ -84,7 +84,15 @@ with sqlite3.connect(sys.argv[1]) as sql:
                     floors[0]))
 
     sql.executemany(
-            "insert or ignore into comingouts values (?,?,?,?,?,?)",
-            msg_rows)
+        "insert or ignore into comingouts values (?,?,?,?,?,?)",
+        msg_rows)
+
+    # skip some erroneous messages
+    sql.execute("""
+        update comingouts
+            set deprecated = 1
+            where (msg_id = 11258 and user_id = 796267776)
+               or (msg_id = 9729 and user_id = 125290876)
+    """)
 
     sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")

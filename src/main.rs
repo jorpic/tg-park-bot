@@ -173,7 +173,9 @@ fn where_they_live(
     user_id: i64,
 ) -> Result<Vec<PlaceToLive>, Error> {
     let mut query = sql.prepare(
-        "select distinct building_num, floor_num from comingouts where user_id = ?"
+        "select distinct building_num, floor_num
+        from comingouts
+        where deprecated = 0 and user_id = ?",
     )?;
     query.bind(1, user_id)?;
     let mut res = Vec::new();

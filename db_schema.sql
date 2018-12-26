@@ -29,6 +29,7 @@ create table comingouts(
   msg_text text not null,
   building_num integer not null,
   floor_num integer not null,
+  deprecated boolean not null default 0,
 
   foreign key(user_id) references known_users(id)
 );
