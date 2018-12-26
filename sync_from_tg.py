@@ -14,7 +14,7 @@ db_path = sys.argv[1]
 config_name = sys.argv[2]
 
 with sqlite3.connect(sys.argv[1]) as sql:
-    sql.row_factory = sqlite3.Row # column-indexable rows
+    sql.row_factory = sqlite3.Row # enable column-indexable rows
     cfg = sql.execute("select * from bot_config where id=?", (config_name,))
     cfg = cfg.fetchone()
 
@@ -25,10 +25,18 @@ with sqlite3.connect(sys.argv[1]) as sql:
     users = client.get_participants(channel)
     sql.execute("""
         create temporary table current_users(
-            id integer primary key
+            id integer primary key,
+            name text not null
         )""")
-    user_rows = [(u.id,) for u in users]
-    sql.executemany("insert into current_users values (?)", user_rows)
+
+    def name(u):
+        username = u.username
+        if username:
+            username = "(@%s)" % username
+        " ".join([u.first_name or '', u.last_name or '', username or ''])
+
+    user_rows = [(u.id, name(u)) for u in users]
+    sql.executemany("insert into current_users values (?, ?)", user_rows)
 
     # add missing users
     sql.execute("""
@@ -57,7 +65,7 @@ with sqlite3.connect(sys.argv[1]) as sql:
 
 
     ### add disclosure messages
-    rx = re.compile(r'#(\d+)этаж')
+    rx = re.compile(r'#(\d+)этаж',  re.IGNORECASE)
     msg_rows = []
     for building in [1,2,3,4]:
         msgs = client.get_messages(

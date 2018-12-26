@@ -16,6 +16,7 @@ create table sync_log(
 
 create table known_users(
   id integer primary key,
+  name test not null,
   joined_on datetime not null,
   removed_on datetime
 );
