@@ -16,7 +16,7 @@ create table sync_log(
 
 create table known_users(
   id integer primary key,
-  name test not null,
+  name text not null,
   joined_on datetime not null,
   removed_on datetime
 );
@@ -24,6 +24,7 @@ create table known_users(
 
 create table comingouts(
   msg_id integer primary key,
+  chat_id integer not null,
   user_id integer not null,
   msg_date datetime not null,
   msg_text text not null,

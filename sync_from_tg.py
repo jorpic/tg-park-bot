@@ -30,10 +30,10 @@ with sqlite3.connect(sys.argv[1]) as sql:
         )""")
 
     def name(u):
-        username = u.username
+        username = u.username or ''
         if username:
             username = "(@%s)" % username
-        " ".join([u.first_name or '', u.last_name or '', username or ''])
+        return " ".join([u.first_name or '', u.last_name or '', username])
 
     user_rows = [(u.id, name(u)) for u in users]
     sql.executemany("insert into current_users values (?, ?)", user_rows)
@@ -77,6 +77,7 @@ with sqlite3.connect(sys.argv[1]) as sql:
             if len(floors) > 0:
                 msg_rows.append((
                     m.id,
+                    m.to_id.channel_id,
                     m.from_id,
                     m.date.strftime("%s"),
                     m.message,
@@ -84,7 +85,7 @@ with sqlite3.connect(sys.argv[1]) as sql:
                     floors[0]))
 
     sql.executemany(
-        "insert or ignore into comingouts values (?,?,?,?,?,?)",
+        "insert or ignore into comingouts values (?,?,?,?,?,?,?,0)",
         msg_rows)
 
     # skip some erroneous messages

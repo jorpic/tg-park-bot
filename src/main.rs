@@ -15,6 +15,7 @@ use futures::future::{self, Either};
 use futures::{stream::Stream, Future};
 use std::env;
 use telebot::functions::*;
+use telebot::objects::Message;
 use telebot::RcBot;
 use tokio_core::reactor::Core;
 
@@ -24,13 +25,6 @@ use tokio_core::reactor::Core;
 const NEW_USER_TIMEOUT: &str = "-2 days";
 const NEW_USER_MSG: &str =
     "Возвращайтесь через пару дней.";
-
-#[derive(Debug, PartialEq)]
-enum UserStatus {
-    Stranger,
-    KnownButUntrusted,
-    KnownAndTrusted,
-}
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
@@ -63,7 +57,7 @@ fn main() -> Result<(), Error> {
             .map_err(|err| (bot, msg, BotError::Fatal(err)))
     };
 
-    let handle = bot.new_cmd("/start").then(move |args| {
+    let start_cmd = bot.new_cmd("/start").then(move |args| {
         let (bot, msg) = args.expect("Fatal error");
         let user_id = msg.from.clone().unwrap().id; // FIXME: unwrap
         let chat_id = msg.chat.id;
@@ -79,15 +73,38 @@ fn main() -> Result<(), Error> {
         let text = compose_greeting(&user_info.status);
         send(bot, msg, user_info, text)
     })
+    .and_then(stop_if(|user| user.status != UserStatus::KnownAndTrusted))
     .and_then(move |(bot, msg, user_info)| {
-        either(user_info.status != UserStatus::KnownAndTrusted,
-            (bot, msg,  user_info),
-            |(bot, msg, _)| future::err((bot, msg, BotError::Done)),
-            |(bot, msg, user_info)| {
-                let text = compose_places(&user_info.places);
-                send(bot, msg, user_info, text)
-            })
+        let text = compose_places(&user_info.places);
+        send(bot, msg, user_info, text)
     })
+    .and_then(stop_if(|user| user.places.len() != 1))
+    .and_then(move |(bot, msg, user_info)| {
+        let text = match user_info.neighbors.len() {
+            0 => "Я не знаю ваших соседей, мне очень жаль. \
+                 Попробуйте зайти ещё когда-нибудь.",
+            _ => "Кажется у вас есть соседи. Я сейчас перешлю вам их сообщения.",
+        }.to_string();
+        send(bot, msg, user_info, text)
+    })
+    .and_then(stop_if(|user| user.neighbors.len() == 0))
+    .and_then(|(bot, msg, user_info)| {
+        let chat_id = user_info.chat_id;
+        // FIXME: forward multiple neighbors
+        let n = &user_info.neighbors[0];
+        bot.forward(chat_id, n.chat_id, n.msg_id)
+            .send()
+            .map(|(bot, msg)| (bot, msg, user_info))
+            .map_err(|err| (bot, msg, BotError::Fatal(err)))
+    })
+//    .and_then(|(bot, msg, user_info)| {
+//        let chat_id = user_info.chat_id;
+//        let msgs: Vec<_> = user_info.neighbors.iter()
+//            .map(|n| bot.forward(chat_id, n.chat_id, n.msg_id).send()).collect();
+//        &msgs[0]
+//            .map(|(bot, msg)| (bot, msg, user_info))
+//        //    .map_err(|err| (bot, msg, BotError::Fatal(err)))
+//    })
     .and_then(|(bot, msg, _)| future::ok((bot, msg)))
     .or_else(|(bot, msg, err)| {
         match err {
@@ -103,11 +120,7 @@ fn main() -> Result<(), Error> {
         }
     });
 
-    // TODO: рассказать про теги
-    // TODO: поискать соседей
-    // TODO: предложить подписаться
-
-    bot.register(handle);
+    bot.register(start_cmd);
     bot.run(&mut reactor)?;
     Ok(())
 }
@@ -142,15 +155,6 @@ struct FullUserInfo {
     neighbors: Vec<NeighborMessage>,
 }
 
-#[derive(Debug)]
-struct NeighborMessage {}
-
-#[derive(Debug)]
-struct PlaceToLive {
-    pub building: i64,
-    pub floor: i64,
-}
-
 fn get_full_user_info(
     sql: &sqlite::Connection,
     user_id: i64,
@@ -158,7 +162,13 @@ fn get_full_user_info(
 ) -> Result<FullUserInfo, Error> {
     let status = is_known_user(&sql, user_id)?;
     let places = where_they_live(&sql, user_id)?;
-    let neighbors = Vec::new();
+    let neighbors = if places.len() == 1 {
+        let building = places[0].building;
+        let floor = places[0].floor;
+        get_neighbors(&sql, user_id, building, floor)?
+    } else {
+        Vec::new()
+    };
     Ok(FullUserInfo {
         id: user_id,
         chat_id,
@@ -166,6 +176,40 @@ fn get_full_user_info(
         places,
         neighbors,
     })
+}
+
+#[derive(Debug, PartialEq)]
+enum UserStatus {
+    Stranger,
+    KnownButUntrusted,
+    KnownAndTrusted,
+}
+
+fn is_known_user(
+    sql: &sqlite::Connection,
+    user_id: i64,
+) -> Result<UserStatus, Error> {
+    let mut query = sql.prepare(
+        "select joined_on < strftime('%s', 'now', ?) from known_users \
+         where removed_on is null and id = ? \
+         limit 1",
+    )?;
+    query.bind(1, NEW_USER_TIMEOUT)?;
+    query.bind(2, user_id)?;
+    let mut res = UserStatus::Stranger;
+    while let sqlite::State::Row = query.next()? {
+        match query.read::<i64>(0)? {
+            0 => res = UserStatus::KnownButUntrusted,
+            _ => res = UserStatus::KnownAndTrusted,
+        }
+    }
+    Ok(res)
+}
+
+#[derive(Debug)]
+struct PlaceToLive {
+    pub building: i64,
+    pub floor: i64,
 }
 
 fn where_they_live(
@@ -187,25 +231,38 @@ fn where_they_live(
     Ok(res)
 }
 
-fn is_known_user(
+#[derive(Debug, Clone)]
+struct NeighborMessage {
+    pub chat_id: i64,
+    pub msg_id: i64,
+}
+
+fn get_neighbors(
     sql: &sqlite::Connection,
     user_id: i64,
-) -> Result<UserStatus, Error> {
+    building: i64,
+    floor: i64,
+) -> Result<Vec<NeighborMessage>, Error> {
     let mut query = sql.prepare(
-        "select joined_on < strftime('%s', 'now', ?) from known_users \
-         where removed_on is null and id = ? \
-         limit 1",
+        "select chat_id, msg_id
+        from comingouts
+        where deprecated = 0
+          and user_id <> ?
+          and building_num = ?
+          and floor_num in (?, ?, ?)
+        order by floor_num, user_id, msg_date",
     )?;
-
-    query.bind(1, NEW_USER_TIMEOUT)?;
-    query.bind(2, user_id)?;
-    let mut res = UserStatus::Stranger;
-
+    query.bind(1, user_id)?;
+    query.bind(2, building)?;
+    query.bind(3, floor - 1)?;
+    query.bind(4, floor)?;
+    query.bind(5, floor + 1)?;
+    let mut res = Vec::new();
     while let sqlite::State::Row = query.next()? {
-        match query.read::<i64>(0)? {
-            0 => res = UserStatus::KnownButUntrusted,
-            _ => res = UserStatus::KnownAndTrusted,
-        }
+        res.push(NeighborMessage {
+            chat_id: query.read::<i64>(0)?,
+            msg_id: query.read::<i64>(1)?,
+        });
     }
     Ok(res)
 }
@@ -238,24 +295,24 @@ fn compose_places(places: &[PlaceToLive]) -> String {
             places[0].building, places[0].floor),
         _ => "Какая неожиданность. Похоже вы отправили несколько сообщений \
             с указанием своего этажа. Теперь я не знаю как быть. \
-            Попробуйте связаться с @MaxTaldykin".to_string(),
+            Попробуйте написать в общий чатик.".to_string(),
     }
 }
 
-fn either<I, E, F, G, FnF, FnG>(
-    cond: bool,
-    x: I,
-    f: FnF,
-    g: FnG,
-) -> Either<F, G>
+#[allow(dead_code)] // See https://github.com/rust-lang/rust/issues/18290
+type PipeArg = (RcBot, Message, FullUserInfo);
+#[allow(dead_code)]
+type PipeErr = (RcBot, Message, BotError);
+
+fn stop_if<F>(predicate: F) -> impl FnMut(PipeArg) -> Result<PipeArg, PipeErr>
 where
-    F: Future<Item = I, Error = E>,
-    G: Future<Item = I, Error = E>,
-    FnF: FnOnce(I) -> F,
-    FnG: FnOnce(I) -> G,
+    F: Fn(&FullUserInfo) -> bool,
 {
-    match cond {
-        true => Either::A(f(x)),
-        false => Either::B(g(x)),
+    move |(bot, msg, user_info)| {
+        if predicate(&user_info) {
+            Err((bot, msg, BotError::Done))
+        } else {
+            Ok((bot, msg, user_info))
+        }
     }
 }
