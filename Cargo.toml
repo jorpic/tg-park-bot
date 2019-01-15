@@ -20,4 +20,4 @@ rev = "668b61c417fc6e9704885f6c35cbd754109d1ba3"
 [dev-dependencies.cargo-husky]
 version = "1"
 default-features = false
-features = ["precommit-hook", "run-cargo-fmt"]
+features = ["precommit-hook", "run-cargo-fmt", "run-cargo-clippy"]

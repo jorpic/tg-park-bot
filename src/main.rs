@@ -87,7 +87,7 @@ fn main() -> Result<(), Error> {
         }.to_string();
         send(bot, msg, user_info, text)
     })
-    .and_then(stop_if(|user| user.neighbors.len() == 0))
+    .and_then(stop_if(|user| user.neighbors.is_empty()))
     .and_then(|(bot, msg, user_info)| {
         let chat_id = user_info.chat_id;
         // FIXME: forward multiple neighbors
