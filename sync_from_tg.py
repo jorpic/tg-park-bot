@@ -77,15 +77,19 @@ with sqlite3.connect(sys.argv[1]) as sql:
             if len(floors) > 0:
                 msg_rows.append((
                     m.id,
-                    m.to_id.channel_id,
                     m.from_id,
                     m.date.strftime("%s"),
                     m.message,
                     building,
                     floors[0]))
 
-    sql.executemany(
-        "insert or ignore into comingouts values (?,?,?,?,?,?,?,0)",
+    sql.executemany("""
+        insert or ignore into comingouts
+            ( msg_id, user_id, msg_date, msg_text
+            , building_num, floor_num
+            , deprecated)
+            values (?,?,?,?,?,?,0)
+        """,
         msg_rows)
 
     # skip some erroneous messages
