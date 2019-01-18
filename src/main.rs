@@ -114,7 +114,7 @@ fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
                     NEW_USER_MSG)
             },
             UserStatus::KnownAndTrusted => {
-                "Привет! Я робот. Я могу помочь вам найти соседей.".to_string()
+                "Привет! Я робот. Могу помочь вам найти соседей.".to_string()
             }
         };
         send(bot, msg, user_info, text)
@@ -122,7 +122,7 @@ fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
     .and_then(stop_if(|user| user.status != UserStatus::KnownAndTrusted))
     .and_then(move |(bot, msg, user_info)| {
         let text = match user_info.places.len() {
-            0 => "Я не знаю где вы живёте.\nЧтобы это исправить, вам нужно \
+            0 => "Увы, не знаю, где вы живёте.\nЧтобы это исправить, вам нужно \
                 в чатик ЖК отправить сообщение вида #Xкорпус #Yэтаж. Например \
                 '#3корпус #11этаж'. Минут через пять после этого возвращайтесь \
                 и ещё раз нажмите /start.".to_string(),
@@ -139,8 +139,8 @@ fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
     .and_then(move |(bot, msg, user_info)| {
         let text = match user_info.neighbors.len() {
             0 => "Я не знаю ваших соседей, мне очень жаль. \
-                 Попробуйте зайти ещё когда-нибудь.",
-            _ => "Кажется у вас есть соседи. Сейчас перешлю вам их сообщения.",
+                 Попробуйте зайти ещё когда-нибудь и снова нажать /start.",
+            _ => "У вас есть соседи. Сейчас перешлю вам их сообщения.",
         }.to_string();
         send(bot, msg, user_info, text)
     })
@@ -165,7 +165,8 @@ fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
                 Either::B(bot.message(
                     msg.chat.id,
                     "Что-то пошло не так. \
-                    Попробуйте ещё раз /start через некоторое время.".to_string(),
+                    Попробуйте ещё раз /start через некоторое время.\n \
+                    Или пожалуйтесь в общий чатик.".to_string(),
                 ).send())
             }
         }
