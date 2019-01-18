@@ -69,9 +69,9 @@ with sqlite3.connect(sys.argv[1]) as sql:
     msg_rows = []
     for building in [1,2,3,4]:
         msgs = client.get_messages(
-                channel,
-                search=("#%dкорпус" % building),
-                limit=1000)
+            channel,
+            search=("#%dкорпус" % building),
+            limit=1000)
         for m in msgs:
             floors = rx.findall(m.message)
             if len(floors) > 0:

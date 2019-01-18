@@ -24,7 +24,7 @@ with sqlite3.connect(sys.argv[1]) as sql:
     assert bot.bot
 
     messages = sql.execute("""
-        select msg_id from comingouts where owned_msg_id is null
+        select msg_id from comingouts where forwarded_msg_id is null
     """).fetchall()
 
     for (msg_id,) in messages:

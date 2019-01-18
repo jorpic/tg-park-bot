@@ -11,15 +11,13 @@ extern crate telebot;
 extern crate tokio_core;
 
 use failure::Error;
-use futures::future::{self, Either};
+use futures::future::{self, Either, IntoFuture};
 use futures::{stream::Stream, Future};
 use std::env;
 use telebot::functions::*;
 use telebot::objects::Message;
 use telebot::RcBot;
 use tokio_core::reactor::Core;
-
-// FIXME: reuse prepared statements?
 
 // We prevent new chat members from accessing neighbourhood information.
 const NEW_USER_TIMEOUT: &str = "-2 days";
@@ -49,15 +47,48 @@ fn main() -> Result<(), Error> {
 
     let mut reactor = Core::new()?;
     let bot = RcBot::new(reactor.handle(), &bot_key).update_interval(500);
+    bot.register(mk_start_cmd(sql, &bot));
 
-    let send = |bot: RcBot, msg, user_info: FullUserInfo, text| {
-        bot.message(user_info.chat_id, text)
-            .send()
-            .map(|(bot, msg)| (bot, msg, user_info))
-            .map_err(|err| (bot, msg, BotError::Fatal(err)))
-    };
+    // TODO: explain why simultaneous db connections are safe here
+    let sql = sqlite::open(db_path)?;
+    let stream = bot.get_stream().and_then(move |(_, upd)| {
+        if let Some(msg) = upd.message {
+            update_comingout(&sql, &msg)?;
+        }
+        Ok(())
+    });
 
-    let start_cmd = bot.new_cmd("/start").then(move |args| {
+    reactor.run(stream.for_each(|_| Ok(())).into_future())?;
+    Ok(())
+}
+
+fn update_comingout(
+    sql: &sqlite::Connection,
+    msg: &Message,
+) -> Result<(), Error> {
+    if let (Some(user), Some(text)) = (&msg.forward_from, &msg.text) {
+        let mut query = sql.prepare(
+            "update comingouts
+            set forwarded_chat_id = ?,
+                forwarded_msg_id = ?
+            where forwarded_chat_id is null
+              and forwarded_msg_id is null
+              and user_id = ?
+              and msg_text = ?",
+        )?;
+        query.bind(1, msg.chat.id)?;
+        query.bind(2, msg.message_id)?;
+        query.bind(3, user.id)?;
+        query.bind(4, &text[..])?;
+        query.next()?;
+        info!("Update forwarded msg {} from {}", msg.message_id, user.id);
+    }
+    Ok(())
+}
+
+fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
+    bot.new_cmd("/start")
+    .then(move |args| {
         let (bot, msg) = args.expect("Fatal error");
         let user_id = msg.from.clone().unwrap().id; // FIXME: unwrap
         let chat_id = msg.chat.id;
@@ -83,7 +114,7 @@ fn main() -> Result<(), Error> {
         let text = match user_info.neighbors.len() {
             0 => "Я не знаю ваших соседей, мне очень жаль. \
                  Попробуйте зайти ещё когда-нибудь.",
-            _ => "Кажется у вас есть соседи. Я сейчас перешлю вам их сообщения.",
+            _ => "Кажется у вас есть соседи. Сейчас перешлю вам их сообщения.",
         }.to_string();
         send(bot, msg, user_info, text)
     })
@@ -97,14 +128,6 @@ fn main() -> Result<(), Error> {
             .map(|(bot, msg)| (bot, msg, user_info))
             .map_err(|err| (bot, msg, BotError::Fatal(err)))
     })
-//    .and_then(|(bot, msg, user_info)| {
-//        let chat_id = user_info.chat_id;
-//        let msgs: Vec<_> = user_info.neighbors.iter()
-//            .map(|n| bot.forward(chat_id, n.chat_id, n.msg_id).send()).collect();
-//        &msgs[0]
-//            .map(|(bot, msg)| (bot, msg, user_info))
-//        //    .map_err(|err| (bot, msg, BotError::Fatal(err)))
-//    })
     .and_then(|(bot, msg, _)| future::ok((bot, msg)))
     .or_else(|(bot, msg, err)| {
         match err {
@@ -118,11 +141,7 @@ fn main() -> Result<(), Error> {
                 ).send())
             }
         }
-    });
-
-    bot.register(start_cmd);
-    bot.run(&mut reactor)?;
-    Ok(())
+    })
 }
 
 fn get_bot_key(
@@ -244,9 +263,12 @@ fn get_neighbors(
     floor: i64,
 ) -> Result<Vec<NeighborMessage>, Error> {
     let mut query = sql.prepare(
-        "select chat_id, msg_id
+        "select
+            forwarded_chat_id, forwarded_msg_id
         from comingouts
         where deprecated = 0
+          and forwarded_chat_id is not null
+          and forwarded_msg_id is not null
           and user_id <> ?
           and building_num = ?
           and floor_num in (?, ?, ?)
@@ -303,6 +325,18 @@ fn compose_places(places: &[PlaceToLive]) -> String {
 type PipeArg = (RcBot, Message, FullUserInfo);
 #[allow(dead_code)]
 type PipeErr = (RcBot, Message, BotError);
+
+fn send(
+    bot: RcBot,
+    msg: Message,
+    user_info: FullUserInfo,
+    text: String,
+) -> impl Future<Item = PipeArg, Error = PipeErr> {
+    bot.message(user_info.chat_id, text)
+        .send()
+        .map(|(bot, msg)| (bot, msg, user_info))
+        .map_err(|err| (bot, msg, BotError::Fatal(err)))
+}
 
 fn stop_if<F>(predicate: F) -> impl FnMut(PipeArg) -> Result<PipeArg, PipeErr>
 where

@@ -30,9 +30,9 @@ create table comingouts(
   msg_text text not null,
   building_num integer not null,
   floor_num integer not null,
+  forwarded_msg_id integer,
+  forwarded_chat_id integer,
   deprecated boolean not null default 0,
-  owned_msg_id integer,
-  owned_chat_id integer,
 
   foreign key(user_id) references known_users(id)
 );
