@@ -103,12 +103,36 @@ fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
         }
     })
     .and_then(move |(bot, msg, user_info)| {
-        let text = compose_greeting(&user_info.status);
+        let text = match user_info.status {
+            UserStatus::Stranger => {
+                "Простите, я вас не знаю.".to_string()
+            },
+            UserStatus::KnownButUntrusted => {
+                format!(
+                    "Вы совсем недавно присоединились к нашему уютному чатику, \
+                    мне нужно время, чтобы узнать вас получше.\n{}",
+                    NEW_USER_MSG)
+            },
+            UserStatus::KnownAndTrusted => {
+                "Привет! Я робот. Я могу помочь вам найти соседей.".to_string()
+            }
+        };
         send(bot, msg, user_info, text)
     })
     .and_then(stop_if(|user| user.status != UserStatus::KnownAndTrusted))
     .and_then(move |(bot, msg, user_info)| {
-        let text = compose_places(&user_info.places);
+        let text = match user_info.places.len() {
+            0 => "Я не знаю где вы живёте.\nЧтобы это исправить, вам нужно \
+                в чатик ЖК отправить сообщение вида #Xкорпус #Yэтаж. Например \
+                '#3корпус #11этаж'. Минут через пять после этого возвращайтесь \
+                и ещё раз нажмите /start.".to_string(),
+            1 => format!(
+                "Похоже, что вы живёте в {}-м корпусе на {}-м этаже.",
+                user_info.places[0].building, user_info.places[0].floor),
+            _ => "Какая неожиданность. Похоже вы отправили несколько сообщений \
+                с указанием своего этажа. Теперь я не знаю как быть. \
+                Попробуйте написать в общий чатик.".to_string(),
+        };
         send(bot, msg, user_info, text)
     })
     .and_then(stop_if(|user| user.places.len() != 1))
@@ -291,38 +315,6 @@ fn get_neighbors(
         });
     }
     Ok(res)
-}
-
-fn compose_greeting(user_status: &UserStatus) -> String {
-    match user_status {
-        UserStatus::Stranger => {
-            "Простите, я вас не знаю.".to_string()
-        },
-        UserStatus::KnownButUntrusted => {
-            format!(
-                "Вы совсем недавно присоединились к нашему уютному чатику, \
-                мне нужно время, чтобы узнать вас получше.\n{}",
-                NEW_USER_MSG)
-        },
-        UserStatus::KnownAndTrusted => {
-            "Привет! Я робот. Я могу помочь вам найти соседей.".to_string()
-        }
-    }
-}
-
-fn compose_places(places: &[PlaceToLive]) -> String {
-    match places.len() {
-        0 => "Я не знаю где вы живёте.\nЧтобы это исправить, вам нужно \
-            в чатик ЖК отправить сообщение вида #Xкорпус #Yэтаж. Например \
-            '#3корпус #11этаж'. Минут через пять после этого возвращайтесь \
-            и ещё раз нажмите /start.".to_string(),
-        1 => format!(
-            "Похоже, что вы живёте в {}-м корпусе на {}-м этаже.",
-            places[0].building, places[0].floor),
-        _ => "Какая неожиданность. Похоже вы отправили несколько сообщений \
-            с указанием своего этажа. Теперь я не знаю как быть. \
-            Попробуйте написать в общий чатик.".to_string(),
-    }
 }
 
 #[allow(dead_code)] // See https://github.com/rust-lang/rust/issues/18290
