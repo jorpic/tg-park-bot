@@ -1,4 +1,5 @@
-#![feature(result_map_or_else)]
+#![deny(clippy::pedantic)]
+#![allow(clippy::non_ascii_literal)]
 
 #[macro_use]
 extern crate log;
@@ -12,7 +13,8 @@ extern crate tokio_core;
 
 use failure::Error;
 use futures::future::{self, Either, IntoFuture};
-use futures::{stream::Stream, Future};
+use futures::stream::{iter_ok, Stream};
+use futures::Future;
 use std::env;
 use telebot::functions::*;
 use telebot::objects::Message;
@@ -121,14 +123,16 @@ fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
     .and_then(stop_if(|user| user.neighbors.is_empty()))
     .and_then(|(bot, msg, user_info)| {
         let chat_id = user_info.chat_id;
-        // FIXME: forward multiple neighbors
-        let n = &user_info.neighbors[0];
-        bot.forward(chat_id, n.chat_id, n.msg_id)
-            .send()
-            .map(|(bot, msg)| (bot, msg, user_info))
-            .map_err(|err| (bot, msg, BotError::Fatal(err)))
+        let bot_copy = bot.clone();
+        iter_ok(user_info.neighbors)
+            .fold((bot, None), move |(bot, _), n|
+                bot.forward(chat_id, n.chat_id, n.msg_id)
+                    .send()
+                    .map(|(bot, msg)| (bot, Some(msg))))
+            .map(|(bot, msg)| (bot, msg.unwrap()))
+            .map_err(move |err| (bot_copy, msg, BotError::Fatal(err)))
     })
-    .and_then(|(bot, msg, _)| future::ok((bot, msg)))
+    // .and_then(|(bot, msg, _)| future::ok((bot, msg)))
     .or_else(|(bot, msg, err)| {
         match err {
             BotError::Done => Either::A(future::ok((bot, msg))),
