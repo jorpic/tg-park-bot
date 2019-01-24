@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 from telethon import TelegramClient, sync
-import sqlite3
-import sys
 import re
+import sys
+import sqlite3
+import time
 
 
 def main():
@@ -13,6 +14,7 @@ def main():
 
     db_path = sys.argv[1]
     config_name = sys.argv[2]
+    log("Program started")
 
     with sqlite3.connect(sys.argv[1]) as sql:
         sql.row_factory = sqlite3.Row # enable column-indexable rows
@@ -25,12 +27,18 @@ def main():
         assert bot.bot
 
         while True:
+            log("Loop")
             update_known_users(sql, client, channel)
             get_new_messages(sql, client, channel)
             sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")
 
             forward_new_messages(sql, client, channel, bot)
             time.sleep(5*60) # sleep 5 minutes
+
+
+def log(msg):
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    print("%s: %s" % (now, msg) , flush=True)
 
 
 def update_known_users(sql, client, channel):
@@ -126,6 +134,5 @@ def forward_new_messages(sql, client, channel, bot):
             to_peer=bot
         ))
         time.sleep(1) # prevent limit-blocking
-
 
 main()
