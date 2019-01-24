@@ -6,22 +6,34 @@ import sys
 import re
 
 
-if len(sys.argv) != 3:
-    print("Usage: %s <db.sqlite> <config_name>" % sys.argv[0])
-    sys.exit()
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: %s <db.sqlite> <config_name>" % sys.argv[0])
+        sys.exit()
 
-db_path = sys.argv[1]
-config_name = sys.argv[2]
+    db_path = sys.argv[1]
+    config_name = sys.argv[2]
 
-with sqlite3.connect(sys.argv[1]) as sql:
-    sql.row_factory = sqlite3.Row # enable column-indexable rows
-    cfg = sql.execute("select * from bot_config where id=?", (config_name,))
-    cfg = cfg.fetchone()
+    with sqlite3.connect(sys.argv[1]) as sql:
+        sql.row_factory = sqlite3.Row # enable column-indexable rows
+        cfg = sql.execute("select * from bot_config where id=?", (config_name,))
+        cfg = cfg.fetchone()
 
-    client = TelegramClient(config_name, cfg["api_id"], cfg["api_hash"]).start()
-    channel = client.get_entity(cfg["chat_url"])
+        client = TelegramClient(config_name, cfg["api_id"], cfg["api_hash"]).start()
+        channel = client.get_entity(cfg["chat_url"])
+        bot = client.get_entity(cfg["bot_username"])
+        assert bot.bot
 
-    ### update known_users
+        while True:
+            update_known_users(sql, client, channel)
+            get_new_messages(sql, client, channel)
+            sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")
+
+            forward_new_messages(sql, client, channel, bot)
+            time.sleep(5*60) # sleep 5 minutes
+
+
+def update_known_users(sql, client, channel):
     users = client.get_participants(channel)
     sql.execute("""
         create temporary table current_users(
@@ -64,7 +76,7 @@ with sqlite3.connect(sys.argv[1]) as sql:
     sql.execute("drop table current_users")
 
 
-    ### add disclosure messages
+def get_new_messages(sql, client, channel):
     rx = re.compile(r'#(\d+)этаж',  re.IGNORECASE)
     msg_rows = []
     for building in [1,2,3,4]:
@@ -100,4 +112,20 @@ with sqlite3.connect(sys.argv[1]) as sql:
                or (msg_id = 9729 and user_id = 125290876)
     """)
 
-    sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")
+
+def forward_new_messages(sql, client, channel, bot):
+    messages = sql.execute("""
+        select * from comingouts where forwarded_msg_id is null
+    """).fetchall()
+
+    for row in messages:
+        print(row)
+        client(functions.messages.ForwardMessagesRequest(
+            from_peer=channel,
+            id=[row["msg_id"]],
+            to_peer=bot
+        ))
+        time.sleep(1) # prevent limit-blocking
+
+
+main()
