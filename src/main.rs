@@ -1,20 +1,11 @@
 #![deny(clippy::pedantic)]
 #![allow(clippy::non_ascii_literal)]
 
-#[macro_use]
-extern crate log;
-extern crate env_logger;
-#[macro_use]
-extern crate failure;
-extern crate futures;
-extern crate sqlite;
-extern crate telebot;
-extern crate tokio_core;
-
-use failure::Error;
+use failure::{format_err, Error};
 use futures::future::{self, Either, IntoFuture};
 use futures::stream::{iter_ok, Stream};
 use futures::Future;
+use log::{error, info};
 use std::env;
 use telebot::functions::*;
 use telebot::objects::Message;
