@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from telethon import TelegramClient, sync
+from telethon import TelegramClient, sync, functions
 import re
 import sys
 import sqlite3
@@ -16,24 +16,27 @@ def main():
     config_name = sys.argv[2]
     log("Program started")
 
-    with sqlite3.connect(sys.argv[1]) as sql:
-        sql.row_factory = sqlite3.Row # enable column-indexable rows
-        cfg = sql.execute("select * from bot_config where id=?", (config_name,))
-        cfg = cfg.fetchone()
+    sql = sqlite3.connect(sys.argv[1])
+    sql.row_factory = sqlite3.Row # enable column-indexable rows
+    cfg = sql.execute("select * from bot_config where id=?", (config_name,))
+    cfg = cfg.fetchone()
 
-        client = TelegramClient(config_name, cfg["api_id"], cfg["api_hash"]).start()
-        channel = client.get_entity(cfg["chat_url"])
-        bot = client.get_entity(cfg["bot_username"])
-        assert bot.bot
+    client = TelegramClient(config_name, cfg["api_id"], cfg["api_hash"]).start()
+    channel = client.get_entity(cfg["chat_url"])
+    bot = client.get_entity(cfg["bot_username"])
+    assert bot.bot
+    sql.close()
 
-        while True:
+    while True:
+        with sqlite3.connect(sys.argv[1]) as sql:
+            sql.row_factory = sqlite3.Row # enable column-indexable rows
             log("Loop")
             update_known_users(sql, client, channel)
             get_new_messages(sql, client, channel)
             sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")
 
             forward_new_messages(sql, client, channel, bot)
-            time.sleep(5*60) # sleep 5 minutes
+        time.sleep(5*60) # sleep 5 minutes
 
 
 def log(msg):
@@ -127,7 +130,7 @@ def forward_new_messages(sql, client, channel, bot):
     """).fetchall()
 
     for row in messages:
-        print(row)
+        log("msg_id: %s txt: %s" % (row["msg_id"], row["msg_text"]))
         client(functions.messages.ForwardMessagesRequest(
             from_peer=channel,
             id=[row["msg_id"]],
