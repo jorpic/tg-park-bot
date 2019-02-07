@@ -5,7 +5,9 @@ use failure::{format_err, Error};
 use futures::future::{self, Either, IntoFuture};
 use futures::stream::{iter_ok, Stream};
 use futures::Future;
+use lazy_static::lazy_static;
 use log::{error, info};
+use regex::Regex;
 use std::env;
 use telebot::functions::*;
 use telebot::objects::Message;
@@ -40,7 +42,10 @@ fn main() -> Result<(), Error> {
 
     let mut reactor = Core::new()?;
     let bot = RcBot::new(reactor.handle(), &bot_key).update_interval(500);
-    bot.register(mk_start_cmd(sql, &bot));
+    bot.register(start_cmd(sql, &bot));
+
+    let sql = sqlite::open(db_path)?;
+    bot.register(list_cmd(sql, &bot));
 
     // TODO: explain why simultaneous db connections are safe here
     let sql = sqlite::open(db_path)?;
@@ -79,7 +84,44 @@ fn update_comingout(
     Ok(())
 }
 
-fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
+fn list_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
+    bot.new_cmd("/list").and_then(move |(bot, msg)| {
+        let txt = msg.text.clone().unwrap_or_else(|| "".to_string());
+        let neighbors = if let Some((building, floor)) = get_numbers(&txt) {
+            get_neighbors(&sql, 0, i64::from(building), i64::from(floor))
+                .unwrap_or_else(|_| vec![])
+        } else {
+            vec![]
+        };
+        if neighbors.is_empty() {
+            Either::A(future::ok((bot, msg)))
+        } else {
+            Either::B(forward_many(bot, msg.chat.id, neighbors))
+        }
+    })
+}
+
+fn get_numbers(input: &str) -> Option<(u8, u8)> {
+    lazy_static! {
+        static ref RX: Regex = Regex::new(r"(\d+)\s+(\d+)").unwrap();
+    }
+    RX.captures(input).and_then(|cap| {
+        match (cap[1].parse::<u8>(), cap[2].parse::<u8>()) {
+            (Ok(a), Ok(b)) => Some((a, b)),
+            _ => None,
+        }
+    })
+}
+
+#[test]
+fn test_get_numbers() {
+    assert_eq!(get_numbers(""), None);
+    assert_eq!(get_numbers("/hello 20"), None);
+    assert_eq!(get_numbers("/hello 10 20"), Some((10, 20)));
+    assert_eq!(get_numbers("/hello 10 20 30"), Some((10, 20)));
+}
+
+fn start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
     bot.new_cmd("/start")
     .then(move |args| {
         let (bot, msg) = args.expect("Fatal error");
@@ -137,14 +179,8 @@ fn mk_start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
     })
     .and_then(stop_if(|user| user.neighbors.is_empty()))
     .and_then(|(bot, msg, user_info)| {
-        let chat_id = user_info.chat_id;
         let bot_copy = bot.clone();
-        iter_ok(user_info.neighbors)
-            .fold((bot, None), move |(bot, _), n|
-                bot.forward(chat_id, n.chat_id, n.msg_id)
-                    .send()
-                    .map(|(bot, msg)| (bot, Some(msg))))
-            .map(|(bot, msg)| (bot, msg.unwrap()))
+        forward_many(bot, user_info.chat_id, user_info.neighbors)
             .map_err(move |err| (bot_copy, msg, BotError::Fatal(err)))
     })
     // .and_then(|(bot, msg, _)| future::ok((bot, msg)))
@@ -313,6 +349,23 @@ fn get_neighbors(
 type PipeArg = (RcBot, Message, FullUserInfo);
 #[allow(dead_code)]
 type PipeErr = (RcBot, Message, BotError);
+
+fn forward_many<I>(
+    bot: RcBot,
+    chat_id: i64,
+    msgs: I,
+) -> impl Future<Item = (RcBot, Message), Error = Error>
+where
+    I: IntoIterator<Item = NeighborMessage>,
+{
+    iter_ok(msgs)
+        .fold((bot, None), move |(bot, _), n| {
+            bot.forward(chat_id, n.chat_id, n.msg_id)
+                .send()
+                .map(|(bot, msg)| (bot, Some(msg)))
+        })
+        .map(|(bot, msg)| (bot, msg.unwrap()))
+}
 
 fn send(
     bot: RcBot,
