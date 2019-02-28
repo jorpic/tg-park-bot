@@ -22,7 +22,19 @@ def main():
     cfg = cfg.fetchone()
 
     client = TelegramClient(config_name, cfg["api_id"], cfg["api_hash"]).start()
-    channel = client.get_entity(cfg["chat_url"])
+    channel = None
+    try:
+        channel = client.get_entity(cfg["chat_url"])
+    except:
+        # Wow, couldn't find channel by url.
+        # This may be the case when channel is private, try to find it by
+        # name.
+        for result in client.iter_dialogs(limit=None):
+            if result.name == cfg["chat_url"]:
+                channel = result.entity
+                break
+    assert channel
+
     bot = client.get_entity(cfg["bot_username"])
     assert bot.bot
     sql.close()
