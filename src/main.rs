@@ -15,9 +15,9 @@ use telebot::RcBot;
 use tokio_core::reactor::Core;
 
 // We prevent new chat members from accessing neighbourhood information.
-const NEW_USER_TIMEOUT: &str = "-2 days";
+const NEW_USER_TIMEOUT: &str = "-2 hours";
 const NEW_USER_MSG: &str =
-    "Возвращайтесь через пару дней.";
+    "Возвращайтесь через пару часов.";
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
