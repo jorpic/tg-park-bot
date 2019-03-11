@@ -5,9 +5,7 @@ use failure::{format_err, Error};
 use futures::future::{self, Either, IntoFuture};
 use futures::stream::{iter_ok, Stream};
 use futures::Future;
-use lazy_static::lazy_static;
 use log::{error, info};
-use regex::Regex;
 use std::env;
 use telebot::functions::*;
 use telebot::objects::Message;
@@ -44,9 +42,6 @@ fn main() -> Result<(), Error> {
     let bot = RcBot::new(reactor.handle(), &bot_key).update_interval(500);
     bot.register(start_cmd(sql, &bot));
 
-    let sql = sqlite::open(db_path)?;
-    bot.register(list_cmd(sql, &bot));
-
     // TODO: explain why simultaneous db connections are safe here
     let sql = sqlite::open(db_path)?;
     let stream = bot.get_stream().and_then(move |(_, upd)| {
@@ -82,43 +77,6 @@ fn update_comingout(
         info!("Update forwarded msg {} from {}", msg.message_id, user.id);
     }
     Ok(())
-}
-
-fn list_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
-    bot.new_cmd("/list").and_then(move |(bot, msg)| {
-        let txt = msg.text.clone().unwrap_or_else(|| "".to_string());
-        let neighbors = if let Some((building, floor)) = get_numbers(&txt) {
-            get_neighbors(&sql, 0, i64::from(building), i64::from(floor))
-                .unwrap_or_else(|_| vec![])
-        } else {
-            vec![]
-        };
-        if neighbors.is_empty() {
-            Either::A(future::ok((bot, msg)))
-        } else {
-            Either::B(forward_many(bot, msg.chat.id, neighbors))
-        }
-    })
-}
-
-fn get_numbers(input: &str) -> Option<(u8, u8)> {
-    lazy_static! {
-        static ref RX: Regex = Regex::new(r"(\d+)\s+(\d+)").unwrap();
-    }
-    RX.captures(input).and_then(|cap| {
-        match (cap[1].parse::<u8>(), cap[2].parse::<u8>()) {
-            (Ok(a), Ok(b)) => Some((a, b)),
-            _ => None,
-        }
-    })
-}
-
-#[test]
-fn test_get_numbers() {
-    assert_eq!(get_numbers(""), None);
-    assert_eq!(get_numbers("/hello 20"), None);
-    assert_eq!(get_numbers("/hello 10 20"), Some((10, 20)));
-    assert_eq!(get_numbers("/hello 10 20 30"), Some((10, 20)));
 }
 
 fn start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
@@ -162,18 +120,20 @@ fn start_cmd(sql: sqlite::Connection, bot: &RcBot) -> impl Stream {
             1 => format!(
                 "Похоже, что вы живёте в {}-м корпусе на {}-м этаже.",
                 user_info.places[0].building, user_info.places[0].floor),
+            _ if user_info.is_landlord =>
+                "Оу, я вижу вы занимаете сразу несколько этажей.".to_string(),
             _ => "Какая неожиданность. Похоже вы отправили несколько сообщений \
                 с указанием своего этажа. Теперь я не знаю как быть. \
                 Попробуйте написать в общий чатик.".to_string(),
         };
         send(bot, msg, user_info, text)
     })
-    .and_then(stop_if(|user| user.places.len() != 1))
+    .and_then(stop_if(|user| user.places.len() != 1 && !user.is_landlord))
     .and_then(move |(bot, msg, user_info)| {
         let text = match user_info.neighbors.len() {
             0 => "Я не знаю ваших соседей, мне очень жаль. \
                  Попробуйте зайти ещё когда-нибудь и снова нажать /start.",
-            _ => "У вас есть соседи. Сейчас перешлю вам их сообщения.",
+            _ => "У вас есть соседи. Сейчас перешлю их сообщения.",
         }.to_string();
         send(bot, msg, user_info, text)
     })
@@ -228,6 +188,7 @@ struct FullUserInfo {
     status: UserStatus,
     places: Vec<PlaceToLive>,
     neighbors: Vec<NeighborMessage>,
+    is_landlord: bool,
 }
 
 fn get_full_user_info(
@@ -237,10 +198,9 @@ fn get_full_user_info(
 ) -> Result<FullUserInfo, Error> {
     let status = is_known_user(&sql, user_id)?;
     let places = where_they_live(&sql, user_id)?;
-    let neighbors = if places.len() == 1 {
-        let building = places[0].building;
-        let floor = places[0].floor;
-        get_neighbors(&sql, user_id, building, floor)?
+    let is_landlord = is_landlord(&sql, user_id)?;
+    let neighbors = if places.len() > 0 {
+        get_neighbors(&sql, user_id)?
     } else {
         Vec::new()
     };
@@ -250,6 +210,7 @@ fn get_full_user_info(
         status,
         places,
         neighbors,
+        is_landlord,
     })
 }
 
@@ -315,32 +276,54 @@ struct NeighborMessage {
 fn get_neighbors(
     sql: &sqlite::Connection,
     user_id: i64,
-    building: i64,
-    floor: i64,
 ) -> Result<Vec<NeighborMessage>, Error> {
     let mut query = sql.prepare(
-        "select
-            forwarded_chat_id, forwarded_msg_id
-        from comingouts
-        where deprecated = 0
-          and forwarded_chat_id is not null
-          and forwarded_msg_id is not null
-          and user_id <> ?
-          and building_num = ?
-          and floor_num in (?, ?, ?)
-        order by floor_num, user_id, msg_date",
+        "with
+          floors(usr, bdg, flr) as (
+            select user_id, building_num, floor_num
+              from comingouts
+              where not deprecated
+                and user_id = ?),
+          neighbor_floors as (
+            select distinct *
+              from floors
+                union select usr, bdg, flr-1 from floors
+                union select usr, bdg, flr+1 from floors),
+          neighbors_messages(usr, flr, msg) as (
+            select user_id, floor_num, max(msg_id)
+              from known_users u, comingouts c, neighbor_floors f
+              where u.id = c.user_id
+                and u.id <> f.usr
+                and c.building_num = f.bdg
+                and c.floor_num = f.flr
+                and removed_on is null
+                and not deprecated
+                and forwarded_chat_id is not null
+                and forwarded_msg_id is not null
+              group by user_id, floor_num)
+          select forwarded_chat_id, forwarded_msg_id
+            from comingouts
+              join neighbors_messages on (user_id = usr and msg_id = msg)
+            order by floor_num, user_id",
     )?;
     query.bind(1, user_id)?;
-    query.bind(2, building)?;
-    query.bind(3, floor - 1)?;
-    query.bind(4, floor)?;
-    query.bind(5, floor + 1)?;
     let mut res = Vec::new();
     while let sqlite::State::Row = query.next()? {
         res.push(NeighborMessage {
             chat_id: query.read::<i64>(0)?,
             msg_id: query.read::<i64>(1)?,
         });
+    }
+    Ok(res)
+}
+
+fn is_landlord(sql: &sqlite::Connection, user_id: i64) -> Result<bool, Error> {
+    let mut query =
+        sql.prepare("select is_landlord from known_users where id = ?")?;
+    query.bind(1, user_id)?;
+    let mut res = false;
+    while let sqlite::State::Row = query.next()? {
+        res = res || query.read::<i64>(0)? == 1;
     }
     Ok(res)
 }

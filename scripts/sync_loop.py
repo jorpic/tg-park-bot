@@ -76,7 +76,7 @@ def update_known_users(sql, client, channel):
     # add missing users
     sql.execute("""
         insert into known_users
-            select *, strftime('%s', 'now'), null from current_users c
+            select *, strftime('%s', 'now'), null, 0 from current_users c
             where not exists
                 (select 1 from known_users k where k.id = c.id)
     """)
@@ -96,6 +96,12 @@ def update_known_users(sql, client, channel):
             where removed_on is not null
               and exists (select 1 from current_users c where c.id = k.id)
     """)
+
+    # mark users occupying multiple floors
+    sql.execute("""
+        update known_users set is_landlord = 1 where id = 693821186
+    """)
+
     sql.execute("drop table current_users")
 
 

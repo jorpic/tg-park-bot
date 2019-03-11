@@ -19,7 +19,8 @@ create table known_users(
   id integer primary key,
   name text not null,
   joined_on datetime not null,
-  removed_on datetime
+  removed_on datetime,
+  is_landlord boolean not null default 0
 );
 
 
