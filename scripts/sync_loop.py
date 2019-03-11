@@ -131,8 +131,10 @@ def get_new_messages(sql, client, channel):
     sql.execute("""
         update comingouts
             set deprecated = 1
-            where (msg_id = 11258 and user_id = 796267776)
-               or (msg_id = 9729 and user_id = 125290876)
+            where (msg_id = 9729 and user_id = 125290876)
+               or (msg_id = 11265 and user_id = 178831924)
+               or (msg_id = 11268 and user_id = 178831924)
+               or (msg_id = 15351 and user_id = 157443808)
     """)
 
 
