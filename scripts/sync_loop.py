@@ -147,7 +147,9 @@ def get_new_messages(sql, client, channel):
 
 def forward_new_messages(sql, client, channel, bot):
     messages = sql.execute("""
-        select * from comingouts where forwarded_msg_id is null
+        select * from comingouts
+            where forwarded_msg_id is null
+              and not deprecated
     """).fetchall()
 
     for row in messages:
