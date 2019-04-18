@@ -141,6 +141,7 @@ def get_new_messages(sql, client, channel):
                or (msg_id = 11265 and user_id = 178831924)
                or (msg_id = 11268 and user_id = 178831924)
                or (msg_id = 15351 and user_id = 157443808)
+               or (msg_id = 15960 and user_id = 164975495)
     """)
 
 
