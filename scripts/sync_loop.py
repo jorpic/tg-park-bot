@@ -150,6 +150,7 @@ def forward_new_messages(sql, client, channel, bot):
         select * from comingouts
             where forwarded_msg_id is null
               and not deprecated
+              and forwarded_on is null
     """).fetchall()
 
     for row in messages:
@@ -159,6 +160,17 @@ def forward_new_messages(sql, client, channel, bot):
             id=[row["msg_id"]],
             to_peer=bot
         ))
+        # Some users prevent others from referencing their names.
+        # In this case we can forward message to the bot, but bot
+        # can't get user's identity and set `forwarded_msg_id`.
+        # Hence we mark forwarded messages with `forwarded_at` to
+        # prevent multiple forwards.
+        sql.execute("""
+            update comingouts
+                set forwarded_on = strftime('%s', 'now')
+                where msg_id = ?
+            """,
+            (row["msg_id"],))
         time.sleep(1) # prevent limit-blocking
 
 main()

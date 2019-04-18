@@ -34,6 +34,7 @@ create table comingouts(
   forwarded_msg_id integer,
   forwarded_chat_id integer,
   deprecated boolean not null default 0,
+  forwarded_on datetime,
 
   foreign key(user_id) references known_users(id)
 );
