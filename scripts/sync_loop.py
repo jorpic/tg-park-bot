@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from telethon import TelegramClient, sync, functions
+from telethon import TelegramClient, sync, functions, types
 import re
 import sys
 import sqlite3
@@ -42,7 +42,6 @@ def main():
     while True:
         with sqlite3.connect(sys.argv[1]) as sql:
             sql.row_factory = sqlite3.Row # enable column-indexable rows
-            log("Loop")
             update_known_users(sql, client, channel)
             get_new_messages(sql, client, channel)
             sql.execute("insert into sync_log values (strftime('%s', 'now'), null)")
@@ -56,6 +55,14 @@ def log(msg):
     print("%s: %s" % (now, msg) , flush=True)
 
 
+def user_name(u):
+    username = u.username or ''
+    if username:
+        username = "(@%s)" % username
+    return " ".join([u.first_name or '', u.last_name or '', username])
+
+
+# TODO: update user's name
 def update_known_users(sql, client, channel):
     users = client.get_participants(channel)
     sql.execute("""
@@ -64,13 +71,7 @@ def update_known_users(sql, client, channel):
             name text not null
         )""")
 
-    def name(u):
-        username = u.username or ''
-        if username:
-            username = "(@%s)" % username
-        return " ".join([u.first_name or '', u.last_name or '', username])
-
-    user_rows = [(u.id, name(u)) for u in users]
+    user_rows = [(u.id, user_name(u)) for u in users]
     sql.executemany("insert into current_users values (?, ?)", user_rows)
 
     # add missing users
@@ -106,7 +107,7 @@ def update_known_users(sql, client, channel):
 
 
 def get_new_messages(sql, client, channel):
-    rx = re.compile(r'#(\d+)этаж',  re.IGNORECASE)
+    rx = re.compile(r'#(\d+)этаж', re.IGNORECASE)
     msg_rows = []
     for building in [1,2,3,4]:
         msgs = client.get_messages(
